@@ -16,6 +16,7 @@ import ro.isdc.wro.cache.CacheEntry;
 import ro.isdc.wro.cache.CacheStrategy;
 import ro.isdc.wro.cache.ContentHashEntry;
 import ro.isdc.wro.cache.DefaultSynchronizedCacheStrategyDecorator;
+import ro.isdc.wro.cache.NoOpCacheStrategy;
 import ro.isdc.wro.config.Context;
 import ro.isdc.wro.config.ReadOnlyContext;
 import ro.isdc.wro.config.jmx.WroConfiguration;
@@ -56,7 +57,7 @@ public class InjectorBuilder {
    */
   private final Map<Class<?>, Object> map = new HashMap<Class<?>, Object>();
   private WroManagerFactory managerFactory;
-  private final LazyInitializer<UriLocatorFactory> uriLocatorFactoryInitializer = new LazyInitializer<UriLocatorFactory>() {
+  private final LazyInitializer<UriLocatorFactory> locatorFactoryInitializer = new LazyInitializer<UriLocatorFactory>() {
     @Override
     protected UriLocatorFactory initialize() {
       final WroManager manager = managerFactory.create();
@@ -80,6 +81,7 @@ public class InjectorBuilder {
       return decorated;
     }
   };
+  
   /**
    * Ensure the strategy is decorated only once.
    */
@@ -87,8 +89,7 @@ public class InjectorBuilder {
     @Override
     protected CacheStrategy<CacheEntry, ContentHashEntry> initialize() {
       final WroManager manager = managerFactory.create();
-      final CacheStrategy<CacheEntry, ContentHashEntry> decorated = new DefaultSynchronizedCacheStrategyDecorator(
-          managerFactory.create().getCacheStrategy());
+      final CacheStrategy<CacheEntry, ContentHashEntry> decorated = decorateCacheStrategy(managerFactory.create().getCacheStrategy());
       // update manager with new decorated strategy
       manager.setCacheStrategy(decorated);
       return decorated;
@@ -101,6 +102,14 @@ public class InjectorBuilder {
    * @VisibleForTesting
    */
   public InjectorBuilder() {
+  }
+  
+  /**
+   * Important decoration. The decorator is responsible for lazy loading and synchronization.
+   */
+  private CacheStrategy<CacheEntry, ContentHashEntry> decorateCacheStrategy(
+      final CacheStrategy<CacheEntry, ContentHashEntry> original) {
+    return new DefaultSynchronizedCacheStrategyDecorator(original);
   }
   
   /**
@@ -150,7 +159,7 @@ public class InjectorBuilder {
     });
     map.put(UriLocatorFactory.class, new InjectorObjectFactory<UriLocatorFactory>() {
       public UriLocatorFactory create() {
-        return uriLocatorFactoryInitializer.get();
+        return locatorFactoryInitializer.get();
       }
     });
     map.put(ProcessorsFactory.class, new InjectorObjectFactory<ProcessorsFactory>() {
@@ -187,9 +196,12 @@ public class InjectorBuilder {
     });
     map.put(CacheStrategy.class, new InjectorObjectFactory<CacheStrategy<CacheEntry, ContentHashEntry>>() {
       public CacheStrategy<CacheEntry, ContentHashEntry> create() {
-        final CacheStrategy<CacheEntry, ContentHashEntry> decorated = cacheStrategyInitializer.get();
-        injector.inject(decorated);
-        return decorated;
+        final WroConfiguration config = Context.get().getConfig();
+        //U
+        final CacheStrategy<CacheEntry, ContentHashEntry> strategy = config.isDisableCache() ? decorateCacheStrategy(new NoOpCacheStrategy())
+            : cacheStrategyInitializer.get();
+        injector.inject(strategy);
+        return strategy;
       }
     });
     map.put(ResourceAuthorizationManager.class, new InjectorObjectFactory<ResourceAuthorizationManager>() {
